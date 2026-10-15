@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>星際射擊</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050817; color: #e8f5ff; font-family: system-ui, sans-serif; }
+        .game { width: min(94vw, 520px); text-align: center; }
+        h1 { margin: 0 0 8px; color: #69e7ff; letter-spacing: .12em; text-shadow: 0 0 18px #19b9ff; }
+        .hud { display: flex; justify-content: space-between; padding: 8px 12px; color: #b8d9ee; font-weight: 700; }
+        canvas { display: block; width: 100%; background: #080f24; border: 1px solid #286080; border-radius: 12px; box-shadow: 0 0 30px #062b50; touch-action: none; }
+        .controls { margin: 12px auto; display: flex; justify-content: center; gap: 12px; }
+        button { border: 1px solid #4ddcff; border-radius: 10px; padding: 10px 18px; color: #e8faff; background: #102b49; font: inherit; font-weight: 700; cursor: pointer; }
+        button:hover { background: #17456a; }
+        .hint { margin: 8px 0; color: #8eacc4; font-size: .9rem; }
+    </style>
+</head>
+<body>
+    <main class="game">
+        <h1>星際射擊</h1>
+        <div class="hud"><span>分數：<b id="score">0</b></span><span>生命：<b id="lives">3</b></span></div>
+        <canvas id="game" width="480" height="600" aria-label="太空射擊遊戲"></canvas>
+        <div class="controls"><button id="start">開始遊戲</button><button id="sound">音效：開</button></div>
+        <p class="hint">鍵盤 ← → 移動、空白鍵射擊；手機可拖曳飛船並點擊射擊。</p>
+    </main>
+    <script>
+        (() => {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            const scoreEl = document.getElementById('score');
+            const livesEl = document.getElementById('lives');
+            const startBtn = document.getElementById('start');
+            const soundBtn = document.getElementById('sound');
+            const keys = {};
+            let player, bullets, enemies, stars, score, lives, running = false;
+            let lastShot = 0, lastEnemy = 0, animation;
+            let audio;
+
+            function beep(frequency, duration, type = 'square', volume = .035) {
+                if (!soundOn) return;
+                try {
+                    audio ||= new (window.AudioContext || window.webkitAudioContext)();
+                    if (audio.state === 'suspended') audio.resume();
+                    const oscillator = audio.createOscillator();
+                    const gain = audio.createGain();
+                    oscillator.type = type;
+                    oscillator.frequency.setValueAtTime(frequency, audio.currentTime);
+                    gain.gain.setValueAtTime(volume, audio.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + duration);
+                    oscillator.connect(gain); gain.connect(audio.destination);
+                    oscillator.start(); oscillator.stop(audio.currentTime + duration);
+                } catch (_) { /* 音效不可用時仍可遊玩 */ }
+            }
+
+            let soundOn = true;
+            function reset() {
+                player = { x: canvas.width / 2, y: canvas.height - 55 };
+                bullets = []; enemies = []; score = 0; lives = 3;
+                stars = Array.from({ length: 70 }, () => ({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, speed: 1 + Math.random() * 2 }));
+                scoreEl.textContent = score; livesEl.textContent = lives;
+            }
+
+            function shoot() {
+                const now = performance.now();
+                if (now - lastShot < 190) return;
+                lastShot = now;
+                bullets.push({ x: player.x, y: player.y - 20 });
+                beep(650, .07, 'triangle', .025);
+            }
+
+            function endGame() {
+                running = false;
+                startBtn.textContent = '再玩一次';
+                beep(150, .4, 'sawtooth', .05);
+            }
+
+            function drawShip() {
+                ctx.save(); ctx.translate(player.x, player.y);
+                ctx.fillStyle = '#65eaff'; ctx.shadowColor = '#45dfff'; ctx.shadowBlur = 15;
+                ctx.beginPath(); ctx.moveTo(0, -22); ctx.lineTo(17, 17); ctx.lineTo(0, 9); ctx.lineTo(-17, 17); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#fff'; ctx.fillRect(-3, 10, 6, 10);
+                ctx.restore();
+            }
+
+            function update() {
+                if (!running) return;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#080f24'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#bcecff';
+                for (const star of stars) {
+                    star.y += star.speed;
+                    if (star.y > canvas.height) { star.y = 0; star.x = Math.random() * canvas.width; }
+                    ctx.globalAlpha = .35 + star.speed / 4; ctx.fillRect(star.x, star.y, 2, 2);
+                }
+                ctx.globalAlpha = 1;
+                if (keys.ArrowLeft || keys.a) player.x -= 5;
+                if (keys.ArrowRight || keys.d) player.x += 5;
+                player.x = Math.max(20, Math.min(canvas.width - 20, player.x));
+                if (keys[' ']) shoot();
+                if (performance.now() - lastEnemy > Math.max(350, 950 - score * 3)) {
+                    lastEnemy = performance.now();
+                    enemies.push({ x: 24 + Math.random() * (canvas.width - 48), y: -20, size: 15 + Math.random() * 7, speed: 1.7 + Math.random() * 1.5 + score / 100 });
+                }
+                bullets = bullets.filter(b => b.y > -10);
+                for (const b of bullets) { b.y -= 8; ctx.fillStyle = '#ffe66d'; ctx.fillRect(b.x - 2, b.y - 9, 4, 13); }
+                for (let i = enemies.length - 1; i >= 0; i--) {
+                    const e = enemies[i]; e.y += e.speed;
+                    ctx.fillStyle = '#ff5470'; ctx.shadowColor = '#ff2850'; ctx.shadowBlur = 12;
+                    ctx.beginPath(); ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+                    let hit = false;
+                    for (let j = bullets.length - 1; j >= 0; j--) {
+                        const b = bullets[j];
+                        if (Math.hypot(e.x - b.x, e.y - b.y) < e.size + 6) {
+                            enemies.splice(i, 1); bullets.splice(j, 1); score += 10; scoreEl.textContent = score;
+                            beep(220, .12, 'triangle'); hit = true; break;
+                        }
+                    }
+                    if (hit) continue;
+                    if (e.y + e.size >= player.y - 15 && Math.abs(e.x - player.x) < e.size + 14) {
+                        enemies.splice(i, 1); lives--; livesEl.textContent = lives; beep(110, .25, 'sawtooth', .05);
+                        if (lives <= 0) { endGame(); break; }
+                    } else if (e.y > canvas.height) {
+                        enemies.splice(i, 1); lives--; livesEl.textContent = lives;
+                        if (lives <= 0) { endGame(); break; }
+                    }
+                }
+                drawShip();
+                if (running) animation = requestAnimationFrame(update);
+            }
+
+            startBtn.addEventListener('click', () => {
+                cancelAnimationFrame(animation); reset(); running = true; startBtn.textContent = '遊戲進行中'; update();
+            });
+            soundBtn.addEventListener('click', () => {
+                soundOn = !soundOn; soundBtn.textContent = `音效：${soundOn ? '開' : '關'}`;
+                if (soundOn) beep(520, .08, 'sine');
+            });
+            window.addEventListener('keydown', event => {
+                if (['ArrowLeft', 'ArrowRight', ' '].includes(event.key)) event.preventDefault();
+                keys[event.key] = true;
+                if (!running && event.key === 'Enter') startBtn.click();
+            });
+            window.addEventListener('keyup', event => { keys[event.key] = false; });
+            canvas.addEventListener('pointermove', event => {
+                if (!running || event.buttons === 0) return;
+                const rect = canvas.getBoundingClientRect();
+                player.x = (event.clientX - rect.left) * canvas.width / rect.width;
+            });
+            canvas.addEventListener('pointerdown', event => {
+                if (!running) return;
+                const rect = canvas.getBoundingClientRect();
+                player.x = (event.clientX - rect.left) * canvas.width / rect.width;
+                shoot();
+            });
+            reset();
+            ctx.fillStyle = '#bcecff'; ctx.font = '20px system-ui'; ctx.textAlign = 'center';
+            ctx.fillText('準備好保衛宇宙了嗎？', canvas.width / 2, canvas.height / 2);
+        })();
+    </script>
+</body>
+</html>
